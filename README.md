@@ -26,12 +26,12 @@ sudo apt update
 sudo apt install -y dbus-user-session flatpak
 ```
 
-Restart WSL (from Windows PowerShell/Command Prompt, or inside WSL) and then
+Restart WSL (from Windows PowerShell/Command Prompt or inside WSL) and then
 manually reopen your distro (e.g. launch Ubuntu from the Start menu or run
 `wsl`):
 
 ```bash
-wsl.exe --shutdown
+wsl.exe --shutdown  # use wsl --shutdown from Windows PowerShell/Command Prompt
 ```
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
