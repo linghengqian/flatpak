@@ -606,6 +606,7 @@ install_polkit_agent (void)
   g_autoptr(GDBusConnection) bus = NULL;
   const char *on_session;
   const char *env;
+  const char *distro_name;
 
   on_session = g_getenv ("FLATPAK_SYSTEM_HELPER_ON_SESSION");
   if (on_session != NULL)
@@ -635,8 +636,9 @@ install_polkit_agent (void)
 
       g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
       env = g_getenv ("WSL_INTEROP");
+      distro_name = g_getenv ("WSL_DISTRO_NAME");
       if ((env == NULL || *env == '\0') &&
-          g_getenv ("WSL_DISTRO_NAME") == NULL &&
+          (distro_name == NULL || *distro_name == '\0') &&
           g_strcmp0 (g_getenv ("FLATPAK_FORCE_TEXT_AUTH"), "1") != 0)
         g_variant_builder_add (&opt_builder, "{sv}", "fallback", g_variant_new_boolean (TRUE));
       options = g_variant_ref_sink (g_variant_builder_end (&opt_builder));
