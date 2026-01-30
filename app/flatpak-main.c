@@ -59,6 +59,61 @@ static gboolean opt_help;
 
 static gboolean is_in_complete;
 
+#ifdef USE_SYSTEM_HELPER
+static gboolean
+flatpak_polkit_gui_agent_available (void)
+{
+  static int cached = -1;
+  static const char *autostart_files[] = {
+    "/etc/xdg/autostart/polkit-gnome-authentication-agent-1.desktop",
+    "/usr/share/xdg/autostart/polkit-gnome-authentication-agent-1.desktop",
+    "/etc/xdg/autostart/lxqt-policykit-agent.desktop",
+    "/usr/share/xdg/autostart/lxqt-policykit-agent.desktop",
+    "/etc/xdg/autostart/polkit-kde-authentication-agent-1.desktop",
+    "/usr/share/xdg/autostart/polkit-kde-authentication-agent-1.desktop",
+    "/etc/xdg/autostart/polkit-mate-authentication-agent.desktop",
+    "/usr/share/xdg/autostart/polkit-mate-authentication-agent.desktop",
+    "/etc/xdg/autostart/xfce-polkit.desktop",
+    "/usr/share/xdg/autostart/xfce-polkit.desktop",
+    NULL
+  };
+  static const char *agent_binaries[] = {
+    "polkit-gnome-authentication-agent-1",
+    "lxqt-policykit-agent",
+    "polkit-kde-authentication-agent-1",
+    "polkit-mate-authentication-agent-1",
+    "xfce-polkit",
+    NULL
+  };
+  int i;
+
+  if (cached != -1)
+    return cached == 1;
+
+  for (i = 0; autostart_files[i] != NULL; i++)
+    {
+      if (g_file_test (autostart_files[i], G_FILE_TEST_EXISTS))
+        {
+          cached = 1;
+          return TRUE;
+        }
+    }
+
+  for (i = 0; agent_binaries[i] != NULL; i++)
+    {
+      g_autofree char *path = g_find_program_in_path (agent_binaries[i]);
+      if (path != NULL)
+        {
+          cached = 1;
+          return TRUE;
+        }
+    }
+
+  cached = 0;
+  return FALSE;
+}
+#endif
+
 typedef struct
 {
   const char *name;
@@ -605,8 +660,7 @@ install_polkit_agent (void)
   g_autoptr(GError) local_error = NULL;
   g_autoptr(GDBusConnection) bus = NULL;
   const char *on_session;
-  const char *env;
-  const char *distro_name;
+  gboolean have_gui_agent = FALSE;
 
   on_session = g_getenv ("FLATPAK_SYSTEM_HELPER_ON_SESSION");
   if (on_session != NULL)
@@ -635,11 +689,8 @@ install_polkit_agent (void)
       subject = polkit_unix_process_new_for_owner (getpid (), 0, getuid ());
 
       g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
-      env = g_getenv ("WSL_INTEROP");
-      distro_name = g_getenv ("WSL_DISTRO_NAME");
-      if ((env == NULL || *env == '\0') &&
-          (distro_name == NULL || *distro_name == '\0') &&
-          g_strcmp0 (g_getenv ("FLATPAK_FORCE_TEXT_AUTH"), "1") != 0)
+      have_gui_agent = flatpak_polkit_gui_agent_available ();
+      if (have_gui_agent)
         g_variant_builder_add (&opt_builder, "{sv}", "fallback", g_variant_new_boolean (TRUE));
       options = g_variant_ref_sink (g_variant_builder_end (&opt_builder));
 

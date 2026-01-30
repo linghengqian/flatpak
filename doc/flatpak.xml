@@ -714,21 +714,6 @@
                      we would normally only use when run on a tty) -->
 
                 <varlistentry>
-                    <term><envar>FLATPAK_FORCE_TEXT_AUTH</envar></term>
-                    <listitem><para>
-                        May be set to <literal>1</literal> to force use of
-                        a simple built-in
-                        <citerefentry><refentrytitle>polkit</refentrytitle><manvolnum>8</manvolnum></citerefentry>
-                        agent when authentication is required to modify
-                        the system-wide installation.
-                        By default,
-                        the desktop environment's polkit agent is used,
-                        if one is available,
-                        usually resulting in a graphical prompt.
-                    </para></listitem>
-                </varlistentry>
-
-                <varlistentry>
                     <term><envar>FLATPAK_GL_DRIVERS</envar></term>
                     <listitem><para>
                         A colon-separated list of graphics driver extensions
