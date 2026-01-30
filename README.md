@@ -17,7 +17,7 @@ Flatpak expects a working systemd and D-Bus session. On Ubuntu under WSL2,
 enable systemd, install D-Bus support, then restart the distro before rerunning
 Flatpak commands.
 
-```
+```bash
 sudo tee /etc/wsl.conf <<'EOF'
 [boot]
 systemd=true
@@ -26,9 +26,10 @@ sudo apt update
 sudo apt install -y dbus-user-session flatpak
 ```
 
-Restart WSL (from Windows or inside WSL) and reopen the distro:
+Restart WSL (from Windows PowerShell/Command Prompt, or inside WSL) and then
+manually reopen your distro:
 
-```
+```bash
 wsl.exe --shutdown
 ```
 
