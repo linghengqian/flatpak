@@ -605,6 +605,7 @@ install_polkit_agent (void)
   g_autoptr(GError) local_error = NULL;
   g_autoptr(GDBusConnection) bus = NULL;
   const char *on_session;
+  const char *env;
 
   on_session = g_getenv ("FLATPAK_SYSTEM_HELPER_ON_SESSION");
   if (on_session != NULL)
@@ -633,7 +634,10 @@ install_polkit_agent (void)
       subject = polkit_unix_process_new_for_owner (getpid (), 0, getuid ());
 
       g_variant_builder_init (&opt_builder, G_VARIANT_TYPE_VARDICT);
-      if (g_strcmp0 (g_getenv ("FLATPAK_FORCE_TEXT_AUTH"), "1") != 0)
+      env = g_getenv ("WSL_INTEROP");
+      if ((env == NULL || *env == '\0') &&
+          g_getenv ("WSL_DISTRO_NAME") == NULL &&
+          g_strcmp0 (g_getenv ("FLATPAK_FORCE_TEXT_AUTH"), "1") != 0)
         g_variant_builder_add (&opt_builder, "{sv}", "fallback", g_variant_new_boolean (TRUE));
       options = g_variant_ref_sink (g_variant_builder_end (&opt_builder));
 
