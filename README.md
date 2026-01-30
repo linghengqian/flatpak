@@ -37,8 +37,13 @@ System-wide operations (such as `flatpak remote-add --system`) require polkit
 authorization. If you see `Flatpak system operation ConfigureRemote not allowed for user`,
 ensure the polkit daemon is running and your user is in the `sudo` group. On WSL,
 system-level `flatpak remote-add` failures are typically due to missing polkit
-authentication in the distro, so use `FLATPAK_FORCE_TEXT_AUTH=1` for a terminal
-password prompt or `--user` to manage per-user remotes.
+authentication in the distro, so start a polkit agent in your session before
+running `flatpak remote-add --system`. With WSLg, install the GUI agent and run
+`/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &` (install via
+`sudo apt install -y policykit-1-gnome`). For a CLI-only session, start
+`pkttyagent --process $$ --notify-fd 1 &`. If needed, use
+`FLATPAK_FORCE_TEXT_AUTH=1` for a terminal password prompt or `--user` to manage
+per-user remotes.
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
 
