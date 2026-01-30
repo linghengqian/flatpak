@@ -27,7 +27,8 @@ sudo apt install -y dbus-user-session flatpak
 ```
 
 Restart WSL (from Windows PowerShell/Command Prompt, or inside WSL) and then
-manually reopen your distro:
+manually reopen your distro (e.g. launch Ubuntu from the Start menu or run
+`wsl`):
 
 ```bash
 wsl.exe --shutdown
