@@ -42,8 +42,10 @@ running `flatpak remote-add --system`. With WSLg, install the GUI agent with
 `sudo apt install -y policykit-1-gnome` and run
 `/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &`. For a
 CLI-only session instead, start `pkttyagent --process $$ --notify-fd 1 &`. If
-needed, use `--user` to manage per-user remotes. On WSL, Flatpak defaults to the
-terminal password prompt normally enabled by `FLATPAK_FORCE_TEXT_AUTH=1`.
+needed, use `--user` to manage per-user remotes. Flatpak registers a built-in
+text polkit agent and treats it as a fallback when no GUI agent is available;
+when WSL is detected (via `WSL_INTEROP` or `WSL_DISTRO_NAME`), the text prompt is
+used immediately, and you can still force it with `FLATPAK_FORCE_TEXT_AUTH=1`.
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
 
