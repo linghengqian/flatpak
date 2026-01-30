@@ -23,7 +23,7 @@ sudo tee /etc/wsl.conf <<'EOF'
 systemd=true
 EOF
 sudo apt update
-sudo apt install -y dbus-user-session flatpak
+sudo apt install -y dbus-user-session flatpak policykit-1
 ```
 
 Restart WSL from Windows PowerShell/Command Prompt and then manually reopen
@@ -32,6 +32,12 @@ your distro (e.g. launch Ubuntu from the Start menu or run `wsl`):
 ```powershell
 wsl --shutdown
 ```
+
+System-wide operations (such as `flatpak remote-add --system`) require polkit
+authorization. If you see `Flatpak system operation ConfigureRemote not allowed for user`,
+ensure the polkit daemon is running and your user is in the `sudo` group, or
+use `FLATPAK_FORCE_TEXT_AUTH=1` for a terminal prompt; alternatively, use
+`--user` to manage per-user remotes.
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
 
