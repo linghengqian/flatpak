@@ -35,9 +35,10 @@ wsl --shutdown
 
 System-wide operations (such as `flatpak remote-add --system`) require polkit
 authorization. If you see `Flatpak system operation ConfigureRemote not allowed for user`,
-ensure the polkit daemon is running and your user is in the `sudo` group, or
-use `FLATPAK_FORCE_TEXT_AUTH=1` for a terminal prompt; alternatively, use
-`--user` to manage per-user remotes.
+ensure the polkit daemon is running and your user is in the `sudo` group. On WSL,
+plain `flatpak remote-add` failures are typically due to missing polkit
+authentication in the distro, so use `FLATPAK_FORCE_TEXT_AUTH=1` for a terminal
+password prompt or `--user` to manage per-user remotes.
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
 
