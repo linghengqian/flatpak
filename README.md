@@ -35,17 +35,21 @@ wsl --shutdown
 
 System-wide operations (such as `flatpak remote-add --system`) require polkit
 authorization. If you see `Flatpak system operation ConfigureRemote not allowed for user`,
-ensure the polkit daemon is running and your user is in the `sudo` group. On WSL,
-system-level `flatpak remote-add` failures are typically due to missing polkit
-authentication in the distro, so start a polkit agent in your session before
-running `flatpak remote-add --system`. With WSLg, install the GUI agent with
-`sudo apt install -y policykit-1-gnome` and run
-`/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &`. For a
-CLI-only session instead, start `pkttyagent --process $$ --notify-fd 1 &`. If
+ensure the polkit daemon is running and your user is in the `sudo` group. Note
+that the polkit system service (`polkitd`) is separate from the per-user polkit
+agent that shows authentication prompts, so `systemctl status polkit` alone does
+not confirm an agent is running. On WSL, system-level `flatpak remote-add`
+failures are typically due to missing polkit authentication in the distro, so
+start a polkit agent in your session before running `flatpak remote-add --system`.
+With WSLg, install the GUI agent with `sudo apt install -y policykit-1-gnome`
+and run `/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 &`. For
+a CLI-only session instead, start `pkttyagent --process $$ --notify-fd 1 &`. If
 needed, use `--user` to manage per-user remotes. Flatpak probes for polkit GUI
 availability by checking common polkit autostart entries or known GUI agent
-binaries before deciding whether to mark its built-in text agent as a fallback
-so any running GUI agent is preferred.
+binaries, and if they are present it registers its built-in text agent as a
+fallback so a running GUI agent is preferred. If a GUI agent package is
+installed but not running, launch it manually or use `pkttyagent` to ensure a
+prompt is available.
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
 
