@@ -49,7 +49,11 @@ availability by checking common polkit autostart entries or known GUI agent
 binaries, and if they are present it registers its built-in text agent as a
 fallback so a running GUI agent is preferred. If a GUI agent package is
 installed but not running, launch it manually or use `pkttyagent` to ensure a
-prompt is available.
+prompt is available. If `pkttyagent` is running and polkitd shows the agent
+registration but `flatpak remote-add --system` still reports `ConfigureRemote
+not allowed`, it typically means polkit authorization was denied (for example,
+missing admin group membership or a restrictive policy), rather than a Flatpak
+bug, so review your polkit rules or use `--user` for per-user remotes.
 
 Community discussion happens in [#flatpak:matrix.org](https://matrix.to/#/#flatpak:matrix.org), on [the mailing list](https://lists.freedesktop.org/mailman/listinfo/flatpak), and on [the Flathub Discourse](https://discourse.flathub.org/).
 
