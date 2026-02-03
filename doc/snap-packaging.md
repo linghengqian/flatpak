@@ -44,3 +44,6 @@ flatpak --version
   installations are not available. Use `flatpak --user` when adding remotes or
   installing apps.
 - Bubblewrap and xdg-dbus-proxy are staged to keep the snap self-contained.
+- The snap uses a minimal set of plugs (home, network, network-bind). You may
+  need to connect additional interfaces (for example, `removable-media` or
+  `dbus`) depending on how you use Flatpak inside the snap.
