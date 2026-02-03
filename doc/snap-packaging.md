@@ -34,7 +34,7 @@ sudo snapcraft --destructive-mode
 ## Install locally
 
 ```sh
-sudo snap install --dangerous ./flatpak_1.17.3_amd64.snap --classic
+sudo snap install --dangerous ./flatpak_*.snap --classic
 flatpak --version
 ```
 
@@ -44,5 +44,3 @@ flatpak --version
   installations are not available. Use `flatpak --user` when adding remotes or
   installing apps.
 - Bubblewrap and xdg-dbus-proxy are staged to keep the snap self-contained.
-- Update the `version` field in `snap/snapcraft.yaml` when the Flatpak version
-  changes.

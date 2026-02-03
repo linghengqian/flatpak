@@ -1,6 +1,6 @@
 name: flatpak
 base: core24
-version: "1.17.3"
+version: "git"
 summary: Flatpak CLI for building, distributing, and running sandboxed applications
 license: LGPL-2.1-or-later
 description: |
