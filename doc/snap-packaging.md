@@ -1,7 +1,7 @@
 # Snapcraft packaging (local development)
 
 This repository includes a `snap/snapcraft.yaml` file intended for local
-snap builds of Flatpak on Ubuntu 24.04. The configuration targets a classic
+snap builds of Flatpak on Ubuntu 24.04. The configuration targets a strict
 snap and disables the system helper, so only **per-user installations** are
 supported inside the snap.
 
@@ -34,7 +34,7 @@ sudo snapcraft --destructive-mode
 ## Install locally
 
 ```sh
-sudo snap install --dangerous ./flatpak_*.snap --classic
+sudo snap install --dangerous ./flatpak_*.snap
 flatpak --version
 ```
 

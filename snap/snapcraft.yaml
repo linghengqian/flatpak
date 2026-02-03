@@ -8,15 +8,19 @@ description: |
   applications on Linux.
 
   This snapcraft configuration is intended for local development builds. It uses
-  classic confinement and disables the system helper, so only per-user installs
+  strict confinement and disables the system helper, so only per-user installs
   are supported inside the snap by default.
 
 grade: devel
-confinement: classic
+confinement: strict
 
 apps:
   flatpak:
     command: usr/bin/flatpak
+    plugs:
+      - home
+      - network
+      - network-bind
 
 parts:
   flatpak:
