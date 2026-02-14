@@ -25,6 +25,7 @@ meson setup --prefix=/usr --sysconfdir=/etc --localstatedir=/var -Dselinux_modul
 meson compile -C _build
 meson test -C _build
 sudo meson install -C _build
+sudo systemd-sysusers
 ```
 
 ### On Fedora
@@ -39,6 +40,7 @@ meson setup --prefix=/usr --sysconfdir=/etc --localstatedir=/var -Dinstalled_tes
 meson compile -C _build
 meson test -C _build
 sudo meson install -C _build
+sudo systemd-sysusers
 ```
 
 ## How to run a specified set of tests
