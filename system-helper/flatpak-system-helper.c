@@ -54,10 +54,9 @@ static guint name_owner_id = 0;
 G_LOCK_DEFINE (cache_dirs_in_use);
 static GHashTable *cache_dirs_in_use = NULL;
 
-/* Authorization cache to work around polkit caching issues in WSL */
 G_LOCK_DEFINE (auth_cache);
-static GHashTable *auth_cache = NULL;  /* key: "uid:action", value: timestamp */
-#define AUTH_CACHE_TIMEOUT_SECONDS 300  /* 5 minutes */
+static GHashTable *auth_cache = NULL;
+#define AUTH_CACHE_TIMEOUT_SECONDS 300
 
 static gboolean on_session_bus = FALSE;
 static gboolean disable_revokefs = FALSE;
@@ -1854,7 +1853,6 @@ dir_ref_is_installed (FlatpakDir *dir,
   return deploy_data != NULL;
 }
 
-/* Check if we have a cached authorization for this uid and action */
 static gboolean
 check_auth_cache (uid_t uid, const gchar *action)
 {
@@ -1873,7 +1871,6 @@ check_auth_cache (uid_t uid, const gchar *action)
   cached_time = g_hash_table_lookup (auth_cache, cache_key);
   if (cached_time != NULL)
     {
-      /* Check if the cached authorization has expired */
       if ((current_time - *cached_time) < AUTH_CACHE_TIMEOUT_SECONDS)
         cached = TRUE;
       else
@@ -1884,7 +1881,6 @@ check_auth_cache (uid_t uid, const gchar *action)
   return cached;
 }
 
-/* Cache a successful authorization for this uid and action */
 static void
 cache_authorization (uid_t uid, const gchar *action)
 {
@@ -2180,7 +2176,6 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
       PolkitCheckAuthorizationFlags auth_flags;
       uid_t caller_uid = 0;
 
-      /* Try to get the caller's UID for caching */
       if (POLKIT_IS_UNIX_PROCESS (subject))
         {
           PolkitUnixProcess *process = POLKIT_UNIX_PROCESS (subject);
@@ -2208,7 +2203,6 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
             }
         }
 
-      /* Check our authorization cache first to avoid repeated prompts */
       if (caller_uid != 0 && check_auth_cache (caller_uid, action))
         {
           authorized = TRUE;
@@ -2234,7 +2228,6 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
 
           authorized = polkit_authorization_result_get_is_authorized (result);
 
-          /* Cache successful authorizations to avoid repeated prompts */
           if (authorized && caller_uid != 0)
             cache_authorization (caller_uid, action);
         }
