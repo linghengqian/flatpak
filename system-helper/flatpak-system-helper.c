@@ -54,6 +54,11 @@ static guint name_owner_id = 0;
 G_LOCK_DEFINE (cache_dirs_in_use);
 static GHashTable *cache_dirs_in_use = NULL;
 
+/* Authorization cache to work around polkit caching issues in WSL */
+G_LOCK_DEFINE (auth_cache);
+static GHashTable *auth_cache = NULL;  /* key: "uid:action", value: timestamp */
+#define AUTH_CACHE_TIMEOUT_SECONDS 300  /* 5 minutes */
+
 static gboolean on_session_bus = FALSE;
 static gboolean disable_revokefs = FALSE;
 static gboolean no_idle_exit = FALSE;
@@ -1849,6 +1854,60 @@ dir_ref_is_installed (FlatpakDir *dir,
   return deploy_data != NULL;
 }
 
+/* Check if we have a cached authorization for this uid and action */
+static gboolean
+check_auth_cache (uid_t uid, const gchar *action)
+{
+  gboolean cached = FALSE;
+  g_autofree gchar *cache_key = NULL;
+  gint64 *cached_time = NULL;
+  gint64 current_time;
+
+  if (auth_cache == NULL)
+    return FALSE;
+
+  cache_key = g_strdup_printf ("%u:%s", uid, action);
+  current_time = g_get_monotonic_time () / G_USEC_PER_SEC;
+
+  G_LOCK (auth_cache);
+  cached_time = g_hash_table_lookup (auth_cache, cache_key);
+  if (cached_time != NULL)
+    {
+      /* Check if the cached authorization has expired */
+      if ((current_time - *cached_time) < AUTH_CACHE_TIMEOUT_SECONDS)
+        cached = TRUE;
+      else
+        g_hash_table_remove (auth_cache, cache_key);
+    }
+  G_UNLOCK (auth_cache);
+
+  return cached;
+}
+
+/* Cache a successful authorization for this uid and action */
+static void
+cache_authorization (uid_t uid, const gchar *action)
+{
+  g_autofree gchar *cache_key = NULL;
+  gint64 *cached_time = NULL;
+
+  if (auth_cache == NULL)
+    {
+      G_LOCK (auth_cache);
+      if (auth_cache == NULL)
+        auth_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+      G_UNLOCK (auth_cache);
+    }
+
+  cache_key = g_strdup_printf ("%u:%s", uid, action);
+  cached_time = g_new (gint64, 1);
+  *cached_time = g_get_monotonic_time () / G_USEC_PER_SEC;
+
+  G_LOCK (auth_cache);
+  g_hash_table_replace (auth_cache, g_steal_pointer (&cache_key), cached_time);
+  G_UNLOCK (auth_cache);
+}
+
 static gboolean
 flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
                                   GDBusMethodInvocation  *invocation,
@@ -2119,25 +2178,66 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
       g_autoptr(AutoPolkitAuthorizationResult) result = NULL;
       g_autoptr(GError) error = NULL;
       PolkitCheckAuthorizationFlags auth_flags;
+      uid_t caller_uid = 0;
 
-      if (no_interaction)
-        auth_flags = POLKIT_CHECK_AUTHORIZATION_FLAGS_NONE;
-      else
-        auth_flags = POLKIT_CHECK_AUTHORIZATION_FLAGS_ALLOW_USER_INTERACTION;
-
-      result = polkit_authority_check_authorization_sync (authority, subject,
-                                                          action, details,
-                                                          auth_flags,
-                                                          NULL, &error);
-      if (result == NULL)
+      /* Try to get the caller's UID for caching */
+      if (POLKIT_IS_UNIX_PROCESS (subject))
         {
-          g_dbus_error_strip_remote_error (error);
-          g_dbus_method_invocation_return_error (invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
-                                                 "Authorization error: %s", error->message);
-          return FALSE;
+          PolkitUnixProcess *process = POLKIT_UNIX_PROCESS (subject);
+          caller_uid = polkit_unix_process_get_uid (process);
+        }
+      else if (POLKIT_IS_SYSTEM_BUS_NAME (subject))
+        {
+          g_autoptr(GError) uid_error = NULL;
+          g_autoptr(GVariant) reply = NULL;
+          GDBusConnection *connection = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, NULL);
+
+          if (connection != NULL)
+            {
+              reply = g_dbus_connection_call_sync (connection,
+                                                   "org.freedesktop.DBus",
+                                                   "/org/freedesktop/DBus",
+                                                   "org.freedesktop.DBus",
+                                                   "GetConnectionUnixUser",
+                                                   g_variant_new ("(s)", sender),
+                                                   G_VARIANT_TYPE ("(u)"),
+                                                   G_DBUS_CALL_FLAGS_NONE,
+                                                   -1, NULL, &uid_error);
+              if (reply != NULL)
+                g_variant_get (reply, "(u)", &caller_uid);
+            }
         }
 
-      authorized = polkit_authorization_result_get_is_authorized (result);
+      /* Check our authorization cache first to avoid repeated prompts */
+      if (caller_uid != 0 && check_auth_cache (caller_uid, action))
+        {
+          authorized = TRUE;
+        }
+      else
+        {
+          if (no_interaction)
+            auth_flags = POLKIT_CHECK_AUTHORIZATION_FLAGS_NONE;
+          else
+            auth_flags = POLKIT_CHECK_AUTHORIZATION_FLAGS_ALLOW_USER_INTERACTION;
+
+          result = polkit_authority_check_authorization_sync (authority, subject,
+                                                              action, details,
+                                                              auth_flags,
+                                                              NULL, &error);
+          if (result == NULL)
+            {
+              g_dbus_error_strip_remote_error (error);
+              g_dbus_method_invocation_return_error (invocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
+                                                     "Authorization error: %s", error->message);
+              return FALSE;
+            }
+
+          authorized = polkit_authorization_result_get_is_authorized (result);
+
+          /* Cache successful authorizations to avoid repeated prompts */
+          if (authorized && caller_uid != 0)
+            cache_authorization (caller_uid, action);
+        }
     }
 
   if (!authorized)
