@@ -1,0 +1,108 @@
+name: flatpak
+base: core24
+version: "git"
+summary: Flatpak CLI for building, distributing, and running sandboxed applications
+license: LGPL-2.1-or-later
+description: |
+  Flatpak is a system for building, distributing, and running sandboxed desktop
+  applications on Linux.
+
+  This snapcraft configuration is intended for local development builds. It uses
+  strict confinement and disables the system helper, so only per-user installs
+  are supported inside the snap by default.
+
+grade: devel
+confinement: strict
+
+apps:
+  flatpak:
+    command: usr/bin/flatpak
+    plugs:
+      - home
+      - network
+      - network-bind
+
+parts:
+  flatpak:
+    plugin: meson
+    source: .
+    meson-parameters:
+      - --prefix=/usr
+      - -Ddocbook_docs=disabled
+      - -Dgtkdoc=disabled
+      - -Dman=disabled
+      - -Dinstalled_tests=false
+      - -Dinternal_checks=false
+      - -Dinternal_tests=false
+      - -Dtests=false
+      - -Dselinux_module=disabled
+      - -Dsystem_helper=disabled
+      - -Dsystem_bubblewrap=bwrap
+      - -Dsystem_dbus_proxy=xdg-dbus-proxy
+    build-packages:
+      - attr
+      - bison
+      - bubblewrap
+      - dbus
+      - desktop-file-utils
+      - gettext
+      - gobject-introspection
+      - gperf
+      - itstool
+      - libappstream-dev
+      - libarchive-dev
+      - libcap-dev
+      - libcurl4-openssl-dev
+      - libdbus-1-dev
+      - libdconf-dev
+      - libdw-dev
+      - libelf-dev
+      - libfuse3-dev
+      - libgdk-pixbuf2.0-dev
+      - libglib2.0-dev
+      - libgirepository1.0-dev
+      - libgpgme-dev
+      - libjson-glib-dev
+      - libmalcontent-0-dev
+      - libostree-dev
+      - libpolkit-agent-1-dev
+      - libpolkit-gobject-1-dev
+      - libseccomp-dev
+      - libstemmer-dev
+      - libsystemd-dev
+      - libxau-dev
+      - libxml2-dev
+      - libyaml-dev
+      - libzstd-dev
+      - meson
+      - ninja-build
+      - pkg-config
+      - python3-pyparsing
+      - socat
+      - xdg-dbus-proxy
+    stage-packages:
+      - bubblewrap
+      - dbus
+      - libappstream4
+      - libarchive13
+      - libcap2
+      - libcurl4
+      - libdconf1
+      - libdw1
+      - libelf1
+      - libfuse3-3
+      - libgdk-pixbuf2.0-0
+      - libglib2.0-0
+      - libgpgme11
+      - libjson-glib-1.0-0
+      - libostree-1-1
+      - libpolkit-agent-1-0
+      - libpolkit-gobject-1-0
+      - libseccomp2
+      - libstemmer0d
+      - libsystemd0
+      - libxau6
+      - libxml2
+      - libyaml-0-2
+      - libzstd1
+      - xdg-dbus-proxy

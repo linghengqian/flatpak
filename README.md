@@ -28,6 +28,8 @@ Flatpak welcomes contributions from anyone! Here are some ways you can help:
 # Hacking
 See [CONTRIBUTING.md](CONTRIBUTING.md)
 
+# Snap packaging
+For local snap builds on Ubuntu, see [doc/snap-packaging.md](doc/snap-packaging.md).
 # Related Projects
 
 Here are some notable projects in the Flatpak ecosystem:
