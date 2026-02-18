@@ -1861,13 +1861,16 @@ check_auth_cache (uid_t uid, const gchar *action)
   gint64 *cached_time = NULL;
   gint64 current_time;
 
-  if (auth_cache == NULL)
-    return FALSE;
-
   cache_key = g_strdup_printf ("%u:%s", uid, action);
   current_time = g_get_monotonic_time () / G_USEC_PER_SEC;
 
   G_LOCK (auth_cache);
+  if (auth_cache == NULL)
+    {
+      G_UNLOCK (auth_cache);
+      return FALSE;
+    }
+
   cached_time = g_hash_table_lookup (auth_cache, cache_key);
   if (cached_time != NULL)
     {
@@ -1882,25 +1885,48 @@ check_auth_cache (uid_t uid, const gchar *action)
 }
 
 static void
+cleanup_stale_auth_cache_entries (void)
+{
+  GHashTableIter iter;
+  gpointer key, value;
+  gint64 current_time;
+  g_autoptr(GPtrArray) stale_keys = NULL;
+
+  if (auth_cache == NULL)
+    return;
+
+  current_time = g_get_monotonic_time () / G_USEC_PER_SEC;
+  stale_keys = g_ptr_array_new_with_free_func (g_free);
+
+  g_hash_table_iter_init (&iter, auth_cache);
+  while (g_hash_table_iter_next (&iter, &key, &value))
+    {
+      gint64 *cached_time = value;
+      if ((current_time - *cached_time) >= AUTH_CACHE_TIMEOUT_SECONDS)
+        g_ptr_array_add (stale_keys, g_strdup (key));
+    }
+
+  for (guint i = 0; i < stale_keys->len; i++)
+    g_hash_table_remove (auth_cache, g_ptr_array_index (stale_keys, i));
+}
+
+static void
 cache_authorization (uid_t uid, const gchar *action)
 {
   g_autofree gchar *cache_key = NULL;
   gint64 *cached_time = NULL;
 
+  G_LOCK (auth_cache);
   if (auth_cache == NULL)
-    {
-      G_LOCK (auth_cache);
-      if (auth_cache == NULL)
-        auth_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
-      G_UNLOCK (auth_cache);
-    }
+    auth_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
 
   cache_key = g_strdup_printf ("%u:%s", uid, action);
   cached_time = g_new (gint64, 1);
   *cached_time = g_get_monotonic_time () / G_USEC_PER_SEC;
 
-  G_LOCK (auth_cache);
   g_hash_table_replace (auth_cache, g_steal_pointer (&cache_key), cached_time);
+
+  cleanup_stale_auth_cache_entries ();
   G_UNLOCK (auth_cache);
 }
 
@@ -2174,7 +2200,7 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
       g_autoptr(AutoPolkitAuthorizationResult) result = NULL;
       g_autoptr(GError) error = NULL;
       PolkitCheckAuthorizationFlags auth_flags;
-      uid_t caller_uid = 0;
+      uid_t caller_uid = -1;
 
       if (POLKIT_IS_UNIX_PROCESS (subject))
         {
@@ -2203,7 +2229,7 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
             }
         }
 
-      if (caller_uid != 0 && check_auth_cache (caller_uid, action))
+      if (caller_uid >= 0 && check_auth_cache (caller_uid, action))
         {
           authorized = TRUE;
         }
@@ -2228,7 +2254,7 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
 
           authorized = polkit_authorization_result_get_is_authorized (result);
 
-          if (authorized && caller_uid != 0)
+          if (authorized && caller_uid >= 0)
             cache_authorization (caller_uid, action);
         }
     }
