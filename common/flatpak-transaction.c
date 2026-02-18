@@ -5110,6 +5110,290 @@ flatpak_transaction_run (FlatpakTransaction *transaction,
   return FLATPAK_TRANSACTION_GET_CLASS (transaction)->run (transaction, cancellable, error);
 }
 
+/* Structure to hold data for parallel download tasks */
+typedef struct {
+  FlatpakTransaction           *transaction;
+  FlatpakTransactionOperation  *op;
+  FlatpakRemoteState           *remote_state;
+  FlatpakTransactionProgress   *progress;
+  GCancellable                 *cancellable;
+  GError                       *error;
+  gboolean                      success;
+  GMutex                        mutex;
+} DownloadTaskData;
+
+static DownloadTaskData *
+download_task_data_new (FlatpakTransaction          *transaction,
+                        FlatpakTransactionOperation *op,
+                        FlatpakRemoteState          *remote_state,
+                        GCancellable                *cancellable)
+{
+  DownloadTaskData *data = g_new0 (DownloadTaskData, 1);
+
+  data->transaction = g_object_ref (transaction);
+  data->op = op;
+  data->remote_state = flatpak_remote_state_ref (remote_state);
+  data->progress = flatpak_transaction_progress_new ();
+  data->cancellable = cancellable ? g_object_ref (cancellable) : NULL;
+  data->error = NULL;
+  data->success = FALSE;
+  g_mutex_init (&data->mutex);
+
+  return data;
+}
+
+static void
+download_task_data_free (DownloadTaskData *data)
+{
+  if (data == NULL)
+    return;
+
+  g_clear_object (&data->transaction);
+  g_clear_pointer (&data->remote_state, flatpak_remote_state_unref);
+  g_clear_object (&data->progress);
+  g_clear_object (&data->cancellable);
+  g_clear_error (&data->error);
+  g_mutex_clear (&data->mutex);
+  g_free (data);
+}
+
+/* Thread function for downloading an operation */
+static void
+download_task_func (gpointer task_data,
+                    gpointer user_data)
+{
+  DownloadTaskData *data = task_data;
+  g_autoptr(GError) local_error = NULL;
+
+  /* Emit new operation signal in the thread */
+  emit_new_op (data->transaction, data->op, data->progress);
+
+  /* Run the download */
+  g_mutex_lock (&data->mutex);
+  data->success = _run_op_download (data->transaction,
+                                     data->op,
+                                     data->remote_state,
+                                     data->progress,
+                                     data->cancellable,
+                                     &local_error);
+
+  if (!data->success && local_error != NULL)
+    data->error = g_error_copy (local_error);
+
+  g_mutex_unlock (&data->mutex);
+
+  flatpak_transaction_progress_done (data->progress);
+}
+
+/* Helper function to download (pull) an operation without deploying it */
+static gboolean
+_run_op_download (FlatpakTransaction           *self,
+                  FlatpakTransactionOperation  *op,
+                  FlatpakRemoteState           *remote_state,
+                  FlatpakTransactionProgress   *progress,
+                  GCancellable                 *cancellable,
+                  GError                      **error)
+{
+  FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
+  gboolean res = TRUE;
+
+  /* Only INSTALL and UPDATE operations need downloading */
+  if (op->kind == FLATPAK_TRANSACTION_OPERATION_INSTALL)
+    {
+      g_autoptr(GError) local_error = NULL;
+
+      if (op->resolved_metakey && !flatpak_check_required_version (flatpak_decomposed_get_ref (op->ref),
+                                                                   op->resolved_metakey, &local_error))
+        {
+          g_propagate_error (error, g_steal_pointer (&local_error));
+          return FALSE;
+        }
+
+      /* Call install with no_deploy=TRUE to only download */
+      res = flatpak_dir_install (priv->dir,
+                                 FALSE,  /* no_pull: we want to pull */
+                                 TRUE,   /* no_deploy: don't deploy yet */
+                                 priv->disable_static_deltas,
+                                 priv->reinstall,
+                                 priv->max_op >= APP_UPDATE,
+                                 op->pin_on_deploy,
+                                 op->update_preinstalled_on_deploy,
+                                 remote_state, op->ref,
+                                 op->resolved_commit,
+                                 (const char **) op->subpaths,
+                                 (const char **) op->previous_ids,
+                                 op->resolved_sideload_path,
+                                 op->resolved_image_source,
+                                 op->resolved_metadata,
+                                 op->resolved_token,
+                                 progress->progress_obj,
+                                 cancellable, error);
+    }
+  else if (op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE)
+    {
+      g_autoptr(GError) local_error = NULL;
+
+      if (op->resolved_metakey && !flatpak_check_required_version (flatpak_decomposed_get_ref (op->ref),
+                                                                   op->resolved_metakey, &local_error))
+        {
+          g_propagate_error (error, g_steal_pointer (&local_error));
+          return FALSE;
+        }
+
+      if (!op->update_only_deploy)
+        {
+          /* Call update with no_deploy=TRUE to only download */
+          res = flatpak_dir_update (priv->dir,
+                                    FALSE,  /* no_pull: we want to pull */
+                                    TRUE,   /* no_deploy: don't deploy yet */
+                                    priv->disable_static_deltas,
+                                    op->commit != NULL,
+                                    priv->max_op >= APP_UPDATE,
+                                    priv->max_op == APP_INSTALL || priv->max_op == RUNTIME_INSTALL,
+                                    remote_state,
+                                    op->ref,
+                                    op->resolved_commit,
+                                    (const char **) op->subpaths,
+                                    (const char **) op->previous_ids,
+                                    op->resolved_sideload_path,
+                                    op->resolved_image_source,
+                                    op->resolved_metadata,
+                                    op->resolved_token,
+                                    progress->progress_obj,
+                                    cancellable, error);
+        }
+    }
+  /* INSTALL_BUNDLE and UNINSTALL don't need separate download phase */
+
+  return res;
+}
+
+/* Helper function to deploy an operation that has already been downloaded */
+static gboolean
+_run_op_deploy (FlatpakTransaction           *self,
+                FlatpakTransactionOperation  *op,
+                FlatpakRemoteState           *remote_state,
+                FlatpakTransactionProgress   *progress,
+                gboolean                     *out_needs_prune,
+                gboolean                     *out_needs_triggers,
+                gboolean                     *out_needs_cache_drop,
+                GCancellable                 *cancellable,
+                GError                      **error)
+{
+  FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
+  gboolean res = TRUE;
+  FlatpakTransactionResult result_details = 0;
+
+  if (op->kind == FLATPAK_TRANSACTION_OPERATION_INSTALL)
+    {
+      g_autoptr(GError) local_error = NULL;
+
+      /* Deploy the already-downloaded package */
+      res = flatpak_dir_install (priv->dir,
+                                 TRUE,   /* no_pull: already pulled */
+                                 FALSE,  /* no_deploy: now we deploy */
+                                 priv->disable_static_deltas,
+                                 priv->reinstall,
+                                 priv->max_op >= APP_UPDATE,
+                                 op->pin_on_deploy,
+                                 op->update_preinstalled_on_deploy,
+                                 remote_state, op->ref,
+                                 op->resolved_commit,
+                                 (const char **) op->subpaths,
+                                 (const char **) op->previous_ids,
+                                 op->resolved_sideload_path,
+                                 op->resolved_image_source,
+                                 op->resolved_metadata,
+                                 op->resolved_token,
+                                 progress->progress_obj,
+                                 cancellable, &local_error);
+
+      /* Handle noop-installs */
+      if (!res && g_error_matches (local_error, FLATPAK_ERROR, FLATPAK_ERROR_ALREADY_INSTALLED))
+        {
+          res = TRUE;
+          g_clear_error (&local_error);
+          result_details |= FLATPAK_TRANSACTION_RESULT_NO_CHANGE;
+        }
+      else if (!res)
+        {
+          g_propagate_error (error, g_steal_pointer (&local_error));
+        }
+
+      if (res)
+        {
+          emit_op_done (self, op, result_details);
+
+          if (priv->reinstall)
+            *out_needs_prune = TRUE;
+
+          if (flatpak_decomposed_is_app (op->ref))
+            *out_needs_triggers = TRUE;
+
+          if (op->pin_on_deploy || op->update_preinstalled_on_deploy)
+            *out_needs_cache_drop = TRUE;
+        }
+    }
+  else if (op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE)
+    {
+      g_autoptr(GError) local_error = NULL;
+
+      if (op->update_only_deploy)
+        {
+          res = flatpak_dir_deploy_update (priv->dir, op->ref,
+                                           op->resolved_commit,
+                                           (const char **) op->subpaths,
+                                           (const char **) op->previous_ids,
+                                           cancellable, &local_error);
+        }
+      else
+        {
+          /* Deploy the already-downloaded update */
+          res = flatpak_dir_update (priv->dir,
+                                    TRUE,   /* no_pull: already pulled */
+                                    FALSE,  /* no_deploy: now we deploy */
+                                    priv->disable_static_deltas,
+                                    op->commit != NULL,
+                                    priv->max_op >= APP_UPDATE,
+                                    priv->max_op == APP_INSTALL || priv->max_op == RUNTIME_INSTALL,
+                                    remote_state,
+                                    op->ref,
+                                    op->resolved_commit,
+                                    (const char **) op->subpaths,
+                                    (const char **) op->previous_ids,
+                                    op->resolved_sideload_path,
+                                    op->resolved_image_source,
+                                    op->resolved_metadata,
+                                    op->resolved_token,
+                                    progress->progress_obj,
+                                    cancellable, &local_error);
+        }
+
+      /* Handle noop-updates */
+      if (!res && g_error_matches (local_error, FLATPAK_ERROR, FLATPAK_ERROR_ALREADY_INSTALLED))
+        {
+          res = TRUE;
+          g_clear_error (&local_error);
+          result_details |= FLATPAK_TRANSACTION_RESULT_NO_CHANGE;
+        }
+      else if (!res)
+        {
+          g_propagate_error (error, g_steal_pointer (&local_error));
+        }
+
+      if (res)
+        {
+          emit_op_done (self, op, result_details);
+          *out_needs_prune = TRUE;
+
+          if (flatpak_decomposed_is_app (op->ref))
+            *out_needs_triggers = TRUE;
+        }
+    }
+
+  return res;
+}
+
 static gboolean
 _run_op_kind (FlatpakTransaction           *self,
               FlatpakTransactionOperation  *op,
@@ -5625,96 +5909,313 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
   if (!ready_res)
     return flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted by user"));
 
-  /* Note: Parallel downloads are configured but not yet fully implemented.
-   * The infrastructure is in place, but actual parallel execution requires
-   * additional refactoring to separate download and deployment phases.
-   * For now, operations are still executed sequentially. */
-  if (priv->max_parallel_downloads > 1)
-    g_info ("Note: Parallel downloads (max=%u) is configured but downloads will still be sequential in this version. Full parallel download support is planned for a future release.", priv->max_parallel_downloads);
-
-  for (l = priv->ops; l != NULL; l = l->next)
+  /* Two-phase execution: Download phase, then Deploy phase */
+  if (priv->max_parallel_downloads > 1 && !priv->no_pull)
     {
-      FlatpakTransactionOperation *op = l->data;
-      g_autoptr(GError) local_error = NULL;
-      gboolean res = TRUE;
-      const char *pref;
-      g_autoptr(FlatpakRemoteState) state = NULL;
+      /* PHASE 1: Parallel Downloads */
+      g_autoptr(GThreadPool) download_pool = NULL;
+      g_autoptr(GPtrArray) download_tasks = g_ptr_array_new_with_free_func ((GDestroyNotify) download_task_data_free);
+      GList *l;
 
-      if (op->skip)
-        continue;
+      g_info ("Running parallel downloads (max=%u concurrent downloads)", priv->max_parallel_downloads);
 
-      priv->current_op = op;
+      /* Create thread pool for parallel downloads */
+      download_pool = g_thread_pool_new (download_task_func,
+                                         NULL,  /* user_data */
+                                         priv->max_parallel_downloads,
+                                         FALSE,  /* exclusive */
+                                         NULL);
 
-      pref = flatpak_decomposed_get_pref (op->ref);
-
-      if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
-          /* Allow installing an app if the runtime failed to update (i.e. is installed) because
-           * the app should still run, and otherwise you could never install the app until the runtime
-           * remote is fixed. */
-          !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
-            flatpak_decomposed_is_app (op->ref)))
+      /* Queue download tasks for operations that need downloading */
+      for (l = priv->ops; l != NULL; l = l->next)
         {
-          flatpak_fail_error (&local_error, FLATPAK_ERROR_SKIPPED,
-                              _("Skipping %s due to previous error"), pref);
-          res = FALSE;
-        }
-      else if (op->kind != FLATPAK_TRANSACTION_OPERATION_UNINSTALL &&
-               (state = flatpak_transaction_ensure_remote_state (self, op->kind, op->remote, NULL, &local_error)) == NULL)
-        {
-          res = FALSE;
-        }
+          FlatpakTransactionOperation *op = l->data;
+          const char *pref;
+          g_autoptr(FlatpakRemoteState) state = NULL;
+          g_autoptr(GError) local_error = NULL;
 
-      /* Here we execute the operation in a helper function */
-      if (res && !_run_op_kind (self, op, state,
-                                &needs_prune, &needs_triggers, &needs_cache_drop,
-                                cancellable, &local_error))
-        res = FALSE;
+          if (op->skip)
+            continue;
 
-      if (res)
-        {
-          g_autoptr(GBytes) deploy_data = NULL;
-          /* deploy v4 guarantees eol/eolr info */
-          deploy_data = flatpak_dir_get_deploy_data (priv->dir, op->ref, 4, NULL, NULL);
+          /* Only INSTALL and UPDATE operations need downloading */
+          if (op->kind != FLATPAK_TRANSACTION_OPERATION_INSTALL &&
+              op->kind != FLATPAK_TRANSACTION_OPERATION_UPDATE)
+            continue;
 
-          if (deploy_data)
+          /* Skip updates that don't need downloading */
+          if (op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE && op->update_only_deploy)
+            continue;
+
+          pref = flatpak_decomposed_get_pref (op->ref);
+
+          /* Check for dependency failures */
+          if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
+              !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
+                flatpak_decomposed_is_app (op->ref)))
             {
-              const char *eol =  flatpak_deploy_data_get_eol (deploy_data);
-              const char *eol_rebase = flatpak_deploy_data_get_eol_rebase (deploy_data);
-
-              if (eol || eol_rebase)
-                g_signal_emit (self, signals[END_OF_LIFED], 0,
-                               flatpak_decomposed_get_ref (op->ref), eol, eol_rebase);
+              flatpak_fail_error (&local_error, FLATPAK_ERROR_SKIPPED,
+                                  _("Skipping %s due to previous error"), pref);
+              op->failed = TRUE;
+              g_signal_emit (self, signals[OPERATION_ERROR], 0, op,
+                             local_error, 0, NULL);
+              continue;
             }
+
+          /* Ensure remote state */
+          state = flatpak_transaction_ensure_remote_state (self, op->kind, op->remote, NULL, &local_error);
+          if (state == NULL)
+            {
+              op->failed = TRUE;
+              g_signal_emit (self, signals[OPERATION_ERROR], 0, op,
+                             local_error, 0, NULL);
+              continue;
+            }
+
+          /* Create download task */
+          DownloadTaskData *task = download_task_data_new (self, op, state, cancellable);
+          g_ptr_array_add (download_tasks, task);
+
+          /* Queue the download task */
+          g_thread_pool_push (download_pool, task, NULL);
         }
 
-      if (!res)
+      /* Wait for all downloads to complete */
+      g_thread_pool_free (download_pool, FALSE, TRUE);
+      download_pool = NULL;
+
+      /* Check download results and mark failed operations */
+      for (guint i = 0; i < download_tasks->len; i++)
         {
-          gboolean do_cont = FALSE;
-          FlatpakTransactionErrorDetails error_details = 0;
+          DownloadTaskData *task = g_ptr_array_index (download_tasks, i);
 
-          op->failed = TRUE;
-
-          if (op->non_fatal)
-            error_details |= FLATPAK_TRANSACTION_ERROR_DETAILS_NON_FATAL;
-
-          g_signal_emit (self, signals[OPERATION_ERROR], 0, op,
-                         local_error, error_details,
-                         &do_cont);
-
-          if (!do_cont)
+          g_mutex_lock (&task->mutex);
+          if (!task->success)
             {
-              if (g_cancellable_set_error_if_cancelled (cancellable, error))
+              task->op->failed = TRUE;
+
+              /* Emit operation error signal */
+              gboolean do_cont = FALSE;
+              FlatpakTransactionErrorDetails error_details = 0;
+
+              if (task->op->non_fatal)
+                error_details |= FLATPAK_TRANSACTION_ERROR_DETAILS_NON_FATAL;
+
+              g_signal_emit (self, signals[OPERATION_ERROR], 0, task->op,
+                             task->error, error_details, &do_cont);
+
+              if (!do_cont)
                 {
+                  g_mutex_unlock (&task->mutex);
+                  if (task->error)
+                    {
+                      g_propagate_error (error, g_error_copy (task->error));
+                    }
+                  else
+                    {
+                      flatpak_fail_error (error, FLATPAK_ERROR_ABORTED,
+                                          _("Aborted due to download failure"));
+                    }
+                  succeeded = FALSE;
+                  goto cleanup;
+                }
+            }
+          g_mutex_unlock (&task->mutex);
+        }
+
+      /* PHASE 2: Sequential Deployment */
+      g_info ("Downloads complete, deploying packages sequentially");
+
+      for (l = priv->ops; l != NULL; l = l->next)
+        {
+          FlatpakTransactionOperation *op = l->data;
+          g_autoptr(GError) local_error = NULL;
+          gboolean res = TRUE;
+          const char *pref;
+          g_autoptr(FlatpakRemoteState) state = NULL;
+
+          if (op->skip)
+            continue;
+
+          priv->current_op = op;
+          pref = flatpak_decomposed_get_pref (op->ref);
+
+          /* Check if operation already failed during download */
+          if (op->failed)
+            continue;
+
+          /* Check for dependency failures */
+          if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
+              !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
+                flatpak_decomposed_is_app (op->ref)))
+            {
+              flatpak_fail_error (&local_error, FLATPAK_ERROR_SKIPPED,
+                                  _("Skipping %s due to previous error"), pref);
+              res = FALSE;
+            }
+          else if (op->kind != FLATPAK_TRANSACTION_OPERATION_UNINSTALL &&
+                   (state = flatpak_transaction_ensure_remote_state (self, op->kind, op->remote, NULL, &local_error)) == NULL)
+            {
+              res = FALSE;
+            }
+
+          /* Deploy downloaded operations or run non-download operations */
+          if (res)
+            {
+              if (op->kind == FLATPAK_TRANSACTION_OPERATION_INSTALL ||
+                  op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE)
+                {
+                  /* Deploy the downloaded package */
+                  g_autoptr(FlatpakTransactionProgress) progress = flatpak_transaction_progress_new ();
+                  emit_new_op (self, op, progress);
+
+                  res = _run_op_deploy (self, op, state, progress,
+                                        &needs_prune, &needs_triggers, &needs_cache_drop,
+                                        cancellable, &local_error);
+
+                  flatpak_transaction_progress_done (progress);
+                }
+              else
+                {
+                  /* Run bundle install or uninstall operations normally */
+                  res = _run_op_kind (self, op, state,
+                                      &needs_prune, &needs_triggers, &needs_cache_drop,
+                                      cancellable, &local_error);
+                }
+            }
+
+          if (res)
+            {
+              g_autoptr(GBytes) deploy_data = NULL;
+              deploy_data = flatpak_dir_get_deploy_data (priv->dir, op->ref, 4, NULL, NULL);
+
+              if (deploy_data)
+                {
+                  const char *eol = flatpak_deploy_data_get_eol (deploy_data);
+                  const char *eol_rebase = flatpak_deploy_data_get_eol_rebase (deploy_data);
+
+                  if (eol || eol_rebase)
+                    g_signal_emit (self, signals[END_OF_LIFED], 0,
+                                   flatpak_decomposed_get_ref (op->ref), eol, eol_rebase);
+                }
+            }
+
+          if (!res)
+            {
+              gboolean do_cont = FALSE;
+              FlatpakTransactionErrorDetails error_details = 0;
+
+              op->failed = TRUE;
+
+              if (op->non_fatal)
+                error_details |= FLATPAK_TRANSACTION_ERROR_DETAILS_NON_FATAL;
+
+              g_signal_emit (self, signals[OPERATION_ERROR], 0, op,
+                             local_error, error_details, &do_cont);
+
+              if (!do_cont)
+                {
+                  if (g_cancellable_set_error_if_cancelled (cancellable, error))
+                    {
+                      succeeded = FALSE;
+                      break;
+                    }
+
+                  flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted due to failure (%s)"), local_error->message);
                   succeeded = FALSE;
                   break;
                 }
-
-              flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted due to failure (%s)"), local_error->message);
-              succeeded = FALSE;
-              break;
             }
         }
     }
+  else
+    {
+      /* Sequential execution (original behavior) */
+      for (l = priv->ops; l != NULL; l = l->next)
+        {
+          FlatpakTransactionOperation *op = l->data;
+          g_autoptr(GError) local_error = NULL;
+          gboolean res = TRUE;
+          const char *pref;
+          g_autoptr(FlatpakRemoteState) state = NULL;
+
+          if (op->skip)
+            continue;
+
+          priv->current_op = op;
+
+          pref = flatpak_decomposed_get_pref (op->ref);
+
+          if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
+              /* Allow installing an app if the runtime failed to update (i.e. is installed) because
+               * the app should still run, and otherwise you could never install the app until the runtime
+               * remote is fixed. */
+              !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
+                flatpak_decomposed_is_app (op->ref)))
+            {
+              flatpak_fail_error (&local_error, FLATPAK_ERROR_SKIPPED,
+                                  _("Skipping %s due to previous error"), pref);
+              res = FALSE;
+            }
+          else if (op->kind != FLATPAK_TRANSACTION_OPERATION_UNINSTALL &&
+                   (state = flatpak_transaction_ensure_remote_state (self, op->kind, op->remote, NULL, &local_error)) == NULL)
+            {
+              res = FALSE;
+            }
+
+          /* Here we execute the operation in a helper function */
+          if (res && !_run_op_kind (self, op, state,
+                                    &needs_prune, &needs_triggers, &needs_cache_drop,
+                                    cancellable, &local_error))
+            res = FALSE;
+
+          if (res)
+            {
+              g_autoptr(GBytes) deploy_data = NULL;
+              /* deploy v4 guarantees eol/eolr info */
+              deploy_data = flatpak_dir_get_deploy_data (priv->dir, op->ref, 4, NULL, NULL);
+
+              if (deploy_data)
+                {
+                  const char *eol =  flatpak_deploy_data_get_eol (deploy_data);
+                  const char *eol_rebase = flatpak_deploy_data_get_eol_rebase (deploy_data);
+
+                  if (eol || eol_rebase)
+                    g_signal_emit (self, signals[END_OF_LIFED], 0,
+                                   flatpak_decomposed_get_ref (op->ref), eol, eol_rebase);
+                }
+            }
+
+          if (!res)
+            {
+              gboolean do_cont = FALSE;
+              FlatpakTransactionErrorDetails error_details = 0;
+
+              op->failed = TRUE;
+
+              if (op->non_fatal)
+                error_details |= FLATPAK_TRANSACTION_ERROR_DETAILS_NON_FATAL;
+
+              g_signal_emit (self, signals[OPERATION_ERROR], 0, op,
+                             local_error, error_details,
+                             &do_cont);
+
+              if (!do_cont)
+                {
+                  if (g_cancellable_set_error_if_cancelled (cancellable, error))
+                    {
+                      succeeded = FALSE;
+                      break;
+                    }
+
+                  flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted due to failure (%s)"), local_error->message);
+                  succeeded = FALSE;
+                  break;
+                }
+            }
+        }
+    }
+
+cleanup:
   priv->current_op = NULL;
 
   if (needs_triggers)
