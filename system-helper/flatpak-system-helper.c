@@ -2247,7 +2247,7 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
             }
         }
 
-      if (caller_uid >= 0 && check_auth_cache (caller_uid, action))
+      if (caller_uid != (uid_t)-1 && check_auth_cache (caller_uid, action))
         {
           authorized = TRUE;
         }
@@ -2272,7 +2272,7 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
 
           authorized = polkit_authorization_result_get_is_authorized (result);
 
-          if (authorized && caller_uid >= 0)
+          if (authorized && caller_uid != (uid_t)-1)
             {
               cache_authorization (caller_uid, action);
 
