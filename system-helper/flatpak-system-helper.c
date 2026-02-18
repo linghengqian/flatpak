@@ -1930,6 +1930,24 @@ cache_authorization (uid_t uid, const gchar *action)
   G_UNLOCK (auth_cache);
 }
 
+static void
+cache_related_authorization (uid_t uid, const gchar *action, const gchar *related_action)
+{
+  g_autofree gchar *cache_key = NULL;
+  gint64 *cached_time = NULL;
+
+  G_LOCK (auth_cache);
+  if (auth_cache == NULL)
+    auth_cache = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+
+  cache_key = g_strdup_printf ("%u:%s", uid, related_action);
+  cached_time = g_new (gint64, 1);
+  *cached_time = g_get_monotonic_time () / G_USEC_PER_SEC;
+
+  g_hash_table_replace (auth_cache, g_steal_pointer (&cache_key), cached_time);
+  G_UNLOCK (auth_cache);
+}
+
 static gboolean
 flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
                                   GDBusMethodInvocation  *invocation,
@@ -2255,7 +2273,12 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
           authorized = polkit_authorization_result_get_is_authorized (result);
 
           if (authorized && caller_uid >= 0)
-            cache_authorization (caller_uid, action);
+            {
+              cache_authorization (caller_uid, action);
+
+              if (g_strcmp0 (action, "org.freedesktop.Flatpak.configure-remote") == 0)
+                cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.update-remote");
+            }
         }
     }
 
