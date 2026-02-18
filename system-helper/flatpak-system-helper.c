@@ -2281,6 +2281,11 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
                   cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.update-remote");
                   cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.modify-repo");
                 }
+              else if (g_strcmp0 (action, "org.freedesktop.Flatpak.modify-repo") == 0 &&
+                       g_strcmp0 (method_name, "EnsureRepo") == 0)
+                {
+                  cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.configure-remote");
+                }
             }
         }
     }
