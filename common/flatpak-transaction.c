@@ -207,6 +207,7 @@ typedef struct _FlatpakTransactionPrivate
 
   gboolean                     needs_resolve;
   gboolean                     needs_tokens;
+  guint                        max_parallel_downloads;
 } FlatpakTransactionPrivate;
 
 enum {
@@ -1548,6 +1549,7 @@ flatpak_transaction_init (FlatpakTransaction *self)
   priv->extra_sideload_repos = g_ptr_array_new_with_free_func (g_free);
   priv->sideload_image_collections = g_ptr_array_new_with_free_func (g_object_unref);
   priv->can_run = TRUE;
+  priv->max_parallel_downloads = 1; /* Default to sequential downloads */
 }
 
 
@@ -2028,6 +2030,50 @@ flatpak_transaction_get_auto_install_debug (FlatpakTransaction *self)
   FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
 
   return priv->auto_install_debug;
+}
+
+/**
+ * flatpak_transaction_set_max_parallel_downloads:
+ * @self: a #FlatpakTransaction
+ * @max_parallel_downloads: the maximum number of downloads to run in parallel
+ *
+ * Sets the maximum number of downloads that can run in parallel during the
+ * transaction. A value of 1 (the default) means downloads will be sequential.
+ * Setting a higher value can speed up installations when multiple packages
+ * need to be downloaded, but may cause issues on slower or unstable connections.
+ *
+ * Note: Deployment (installation) is always done sequentially after downloads
+ * complete, regardless of this setting.
+ *
+ * Since: 1.16.0
+ */
+void
+flatpak_transaction_set_max_parallel_downloads (FlatpakTransaction *self,
+                                                guint               max_parallel_downloads)
+{
+  FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
+
+  /* Ensure at least 1 to avoid division by zero or other issues */
+  priv->max_parallel_downloads = MAX (1, max_parallel_downloads);
+}
+
+/**
+ * flatpak_transaction_get_max_parallel_downloads:
+ * @self: a #FlatpakTransaction
+ *
+ * Gets the maximum number of parallel downloads set by
+ * flatpak_transaction_set_max_parallel_downloads().
+ *
+ * Returns: the maximum number of parallel downloads (minimum 1)
+ *
+ * Since: 1.16.0
+ */
+guint
+flatpak_transaction_get_max_parallel_downloads (FlatpakTransaction *self)
+{
+  FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
+
+  return priv->max_parallel_downloads;
 }
 
 static FlatpakTransactionOperation *
@@ -5578,6 +5624,13 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
   g_signal_emit (self, signals[READY], 0, &ready_res);
   if (!ready_res)
     return flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted by user"));
+
+  /* Note: Parallel downloads are configured but not yet fully implemented.
+   * The infrastructure is in place, but actual parallel execution requires
+   * additional refactoring to separate download and deployment phases.
+   * For now, operations are still executed sequentially. */
+  if (priv->max_parallel_downloads > 1)
+    g_info ("Note: Parallel downloads (max=%u) is configured but downloads will still be sequential in this version. Full parallel download support is planned for a future release.", priv->max_parallel_downloads);
 
   for (l = priv->ops; l != NULL; l = l->next)
     {

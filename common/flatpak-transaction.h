@@ -266,6 +266,11 @@ void                flatpak_transaction_set_auto_install_debug (FlatpakTransacti
 FLATPAK_EXTERN
 gboolean            flatpak_transaction_get_auto_install_debug (FlatpakTransaction *self);
 FLATPAK_EXTERN
+void                flatpak_transaction_set_max_parallel_downloads (FlatpakTransaction *self,
+                                                                     guint               max_parallel_downloads);
+FLATPAK_EXTERN
+guint               flatpak_transaction_get_max_parallel_downloads (FlatpakTransaction *self);
+FLATPAK_EXTERN
 void                flatpak_transaction_add_dependency_source (FlatpakTransaction  *self,
                                                                FlatpakInstallation *installation);
 FLATPAK_EXTERN
