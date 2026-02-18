@@ -5325,10 +5325,9 @@ _run_op_deploy (FlatpakTransaction           *self,
         }
       else
         {
-          /* Deploy the already-downloaded update */
           res = flatpak_dir_update (priv->dir,
-                                    TRUE,   /* no_pull: already pulled */
-                                    FALSE,  /* no_deploy: now we deploy */
+                                    TRUE,
+                                    FALSE,
                                     priv->disable_static_deltas,
                                     op->commit != NULL,
                                     priv->max_op >= APP_UPDATE,
@@ -5346,7 +5345,6 @@ _run_op_deploy (FlatpakTransaction           *self,
                                     cancellable, &local_error);
         }
 
-      /* Handle noop-updates */
       if (!res && g_error_matches (local_error, FLATPAK_ERROR, FLATPAK_ERROR_ALREADY_INSTALLED))
         {
           res = TRUE;
@@ -6114,7 +6112,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
     }
   else
     {
-      /* Sequential execution (original behavior) */
       for (l = priv->ops; l != NULL; l = l->next)
         {
           FlatpakTransactionOperation *op = l->data;
@@ -6131,9 +6128,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
           pref = flatpak_decomposed_get_pref (op->ref);
 
           if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
-              /* Allow installing an app if the runtime failed to update (i.e. is installed) because
-               * the app should still run, and otherwise you could never install the app until the runtime
-               * remote is fixed. */
               !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
                 flatpak_decomposed_is_app (op->ref)))
             {
@@ -6147,7 +6141,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
               res = FALSE;
             }
 
-          /* Here we execute the operation in a helper function */
           if (res && !_run_op_kind (self, op, state,
                                     &needs_prune, &needs_triggers, &needs_cache_drop,
                                     cancellable, &local_error))
