@@ -1549,7 +1549,7 @@ flatpak_transaction_init (FlatpakTransaction *self)
   priv->extra_sideload_repos = g_ptr_array_new_with_free_func (g_free);
   priv->sideload_image_collections = g_ptr_array_new_with_free_func (g_object_unref);
   priv->can_run = TRUE;
-  priv->max_parallel_downloads = 0; /* Default to automatic parallel downloads based on package count */
+  priv->max_parallel_downloads = 0;
 }
 
 
@@ -2054,21 +2054,9 @@ flatpak_transaction_set_max_parallel_downloads (FlatpakTransaction *self,
 {
   FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
 
-  /* Allow 0 to mean automatic (based on number of packages) */
   priv->max_parallel_downloads = max_parallel_downloads;
 }
 
-/**
- * flatpak_transaction_get_max_parallel_downloads:
- * @self: a #FlatpakTransaction
- *
- * Gets the maximum number of parallel downloads set by
- * flatpak_transaction_set_max_parallel_downloads().
- *
- * Returns: the maximum number of parallel downloads (0 means automatic)
- *
- * Since: 1.16.0
- */
 guint
 flatpak_transaction_get_max_parallel_downloads (FlatpakTransaction *self)
 {
@@ -5111,7 +5099,6 @@ flatpak_transaction_run (FlatpakTransaction *transaction,
   return FLATPAK_TRANSACTION_GET_CLASS (transaction)->run (transaction, cancellable, error);
 }
 
-/* Structure to hold data for parallel download tasks */
 typedef struct {
   FlatpakTransaction           *transaction;
   FlatpakTransactionOperation  *op;
@@ -5158,7 +5145,6 @@ download_task_data_free (DownloadTaskData *data)
   g_free (data);
 }
 
-/* Thread function for downloading an operation */
 static void
 download_task_func (gpointer task_data,
                     gpointer user_data)
@@ -5166,10 +5152,8 @@ download_task_func (gpointer task_data,
   DownloadTaskData *data = task_data;
   g_autoptr(GError) local_error = NULL;
 
-  /* Emit new operation signal in the thread */
   emit_new_op (data->transaction, data->op, data->progress);
 
-  /* Run the download */
   g_mutex_lock (&data->mutex);
   data->success = _run_op_download (data->transaction,
                                      data->op,
@@ -5186,7 +5170,6 @@ download_task_func (gpointer task_data,
   flatpak_transaction_progress_done (data->progress);
 }
 
-/* Helper function to download (pull) an operation without deploying it */
 static gboolean
 _run_op_download (FlatpakTransaction           *self,
                   FlatpakTransactionOperation  *op,
@@ -5198,7 +5181,6 @@ _run_op_download (FlatpakTransaction           *self,
   FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
   gboolean res = TRUE;
 
-  /* Only INSTALL and UPDATE operations need downloading */
   if (op->kind == FLATPAK_TRANSACTION_OPERATION_INSTALL)
     {
       g_autoptr(GError) local_error = NULL;
@@ -5210,10 +5192,9 @@ _run_op_download (FlatpakTransaction           *self,
           return FALSE;
         }
 
-      /* Call install with no_deploy=TRUE to only download */
       res = flatpak_dir_install (priv->dir,
-                                 FALSE,  /* no_pull: we want to pull */
-                                 TRUE,   /* no_deploy: don't deploy yet */
+                                 FALSE,
+                                 TRUE,
                                  priv->disable_static_deltas,
                                  priv->reinstall,
                                  priv->max_op >= APP_UPDATE,
@@ -5243,10 +5224,9 @@ _run_op_download (FlatpakTransaction           *self,
 
       if (!op->update_only_deploy)
         {
-          /* Call update with no_deploy=TRUE to only download */
           res = flatpak_dir_update (priv->dir,
-                                    FALSE,  /* no_pull: we want to pull */
-                                    TRUE,   /* no_deploy: don't deploy yet */
+                                    FALSE,
+                                    TRUE,
                                     priv->disable_static_deltas,
                                     op->commit != NULL,
                                     priv->max_op >= APP_UPDATE,
@@ -5264,12 +5244,10 @@ _run_op_download (FlatpakTransaction           *self,
                                     cancellable, error);
         }
     }
-  /* INSTALL_BUNDLE and UNINSTALL don't need separate download phase */
 
   return res;
 }
 
-/* Helper function to deploy an operation that has already been downloaded */
 static gboolean
 _run_op_deploy (FlatpakTransaction           *self,
                 FlatpakTransactionOperation  *op,
@@ -5289,10 +5267,9 @@ _run_op_deploy (FlatpakTransaction           *self,
     {
       g_autoptr(GError) local_error = NULL;
 
-      /* Deploy the already-downloaded package */
       res = flatpak_dir_install (priv->dir,
-                                 TRUE,   /* no_pull: already pulled */
-                                 FALSE,  /* no_deploy: now we deploy */
+                                 TRUE,
+                                 FALSE,
                                  priv->disable_static_deltas,
                                  priv->reinstall,
                                  priv->max_op >= APP_UPDATE,
@@ -5309,7 +5286,6 @@ _run_op_deploy (FlatpakTransaction           *self,
                                  progress->progress_obj,
                                  cancellable, &local_error);
 
-      /* Handle noop-installs */
       if (!res && g_error_matches (local_error, FLATPAK_ERROR, FLATPAK_ERROR_ALREADY_INSTALLED))
         {
           res = TRUE;
@@ -5910,9 +5886,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
   if (!ready_res)
     return flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted by user"));
 
-  /* Two-phase execution: Download phase, then Deploy phase */
-
-  /* First, count how many operations need downloading for auto-calculation */
   guint download_op_count = 0;
   if (!priv->no_pull)
     {
@@ -5924,12 +5897,10 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
           if (op->skip)
             continue;
 
-          /* Only INSTALL and UPDATE operations need downloading */
           if (op->kind != FLATPAK_TRANSACTION_OPERATION_INSTALL &&
               op->kind != FLATPAK_TRANSACTION_OPERATION_UPDATE)
             continue;
 
-          /* Skip updates that don't need downloading */
           if (op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE && op->update_only_deploy)
             continue;
 
@@ -5937,19 +5908,12 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
         }
     }
 
-  /* Determine actual parallel download count:
-   * - If max_parallel_downloads == 0: automatic (use download_op_count)
-   * - If max_parallel_downloads == 1: sequential mode
-   * - Otherwise: use the specified value
-   */
   guint actual_parallel_downloads = priv->max_parallel_downloads;
   if (actual_parallel_downloads == 0)
     actual_parallel_downloads = download_op_count;
 
-  /* Use parallel downloads if we have more than 1 download and we're not in sequential mode */
   if (actual_parallel_downloads > 1 && !priv->no_pull && download_op_count > 0)
     {
-      /* PHASE 1: Parallel Downloads */
       g_autoptr(GThreadPool) download_pool = NULL;
       g_autoptr(GPtrArray) download_tasks = g_ptr_array_new_with_free_func ((GDestroyNotify) download_task_data_free);
       GList *l;
@@ -5957,14 +5921,12 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
       g_info ("Running parallel downloads (max=%u concurrent downloads for %u packages)",
               actual_parallel_downloads, download_op_count);
 
-      /* Create thread pool for parallel downloads */
       download_pool = g_thread_pool_new (download_task_func,
-                                         NULL,  /* user_data */
+                                         NULL,
                                          actual_parallel_downloads,
-                                         FALSE,  /* exclusive */
+                                         FALSE,
                                          NULL);
 
-      /* Queue download tasks for operations that need downloading */
       for (l = priv->ops; l != NULL; l = l->next)
         {
           FlatpakTransactionOperation *op = l->data;
@@ -5975,18 +5937,15 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
           if (op->skip)
             continue;
 
-          /* Only INSTALL and UPDATE operations need downloading */
           if (op->kind != FLATPAK_TRANSACTION_OPERATION_INSTALL &&
               op->kind != FLATPAK_TRANSACTION_OPERATION_UPDATE)
             continue;
 
-          /* Skip updates that don't need downloading */
           if (op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE && op->update_only_deploy)
             continue;
 
           pref = flatpak_decomposed_get_pref (op->ref);
 
-          /* Check for dependency failures */
           if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
               !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
                 flatpak_decomposed_is_app (op->ref)))
@@ -5999,7 +5958,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
               continue;
             }
 
-          /* Ensure remote state */
           state = flatpak_transaction_ensure_remote_state (self, op->kind, op->remote, NULL, &local_error);
           if (state == NULL)
             {
@@ -6009,19 +5967,15 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
               continue;
             }
 
-          /* Create download task */
           DownloadTaskData *task = download_task_data_new (self, op, state, cancellable);
           g_ptr_array_add (download_tasks, task);
 
-          /* Queue the download task */
           g_thread_pool_push (download_pool, task, NULL);
         }
 
-      /* Wait for all downloads to complete */
       g_thread_pool_free (download_pool, FALSE, TRUE);
       download_pool = NULL;
 
-      /* Check download results and mark failed operations */
       for (guint i = 0; i < download_tasks->len; i++)
         {
           DownloadTaskData *task = g_ptr_array_index (download_tasks, i);
@@ -6031,7 +5985,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
             {
               task->op->failed = TRUE;
 
-              /* Emit operation error signal */
               gboolean do_cont = FALSE;
               FlatpakTransactionErrorDetails error_details = 0;
 
@@ -6060,7 +6013,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
           g_mutex_unlock (&task->mutex);
         }
 
-      /* PHASE 2: Sequential Deployment */
       g_info ("Downloads complete, deploying packages sequentially");
 
       for (l = priv->ops; l != NULL; l = l->next)
@@ -6077,11 +6029,9 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
           priv->current_op = op;
           pref = flatpak_decomposed_get_pref (op->ref);
 
-          /* Check if operation already failed during download */
           if (op->failed)
             continue;
 
-          /* Check for dependency failures */
           if (op->fail_if_op_fails && (op->fail_if_op_fails->failed) &&
               !(op->fail_if_op_fails->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE &&
                 flatpak_decomposed_is_app (op->ref)))
@@ -6096,13 +6046,11 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
               res = FALSE;
             }
 
-          /* Deploy downloaded operations or run non-download operations */
           if (res)
             {
               if (op->kind == FLATPAK_TRANSACTION_OPERATION_INSTALL ||
                   op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE)
                 {
-                  /* Deploy the downloaded package */
                   g_autoptr(FlatpakTransactionProgress) progress = flatpak_transaction_progress_new ();
                   emit_new_op (self, op, progress);
 
@@ -6114,7 +6062,6 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
                 }
               else
                 {
-                  /* Run bundle install or uninstall operations normally */
                   res = _run_op_kind (self, op, state,
                                       &needs_prune, &needs_triggers, &needs_cache_drop,
                                       cancellable, &local_error);
