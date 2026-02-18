@@ -62,6 +62,7 @@ static gboolean opt_reinstall;
 static gboolean opt_noninteractive;
 static gboolean opt_or_update;
 static gboolean opt_no_auto_pin;
+static int opt_max_parallel_downloads = -1;
 
 static GOptionEntry options[] = {
   { "arch", 0, 0, G_OPTION_ARG_STRING, &opt_arch, N_("Arch to install for"), N_("ARCH") },
@@ -86,6 +87,7 @@ static GOptionEntry options[] = {
   { "or-update", 0, 0, G_OPTION_ARG_NONE, &opt_or_update, N_("Update install if already installed"), NULL },
   /* Translators: A sideload is when you install from a local USB drive rather than the Internet. */
   { "sideload-repo", 0, 0, G_OPTION_ARG_FILENAME_ARRAY, &opt_sideload_repos, N_("Use this local repo for sideloads"), N_("PATH") },
+  { "max-parallel-downloads", 0, 0, G_OPTION_ARG_INT, &opt_max_parallel_downloads, N_("Maximum number of parallel downloads (default: 1)"), N_("N") },
   { NULL }
 };
 
@@ -155,6 +157,9 @@ create_install_transaction (FlatpakDir    *dir,
   flatpak_transaction_set_reinstall (transaction, opt_reinstall);
   flatpak_transaction_set_auto_install_sdk (transaction, opt_include_sdk);
   flatpak_transaction_set_auto_install_debug (transaction, opt_include_debug);
+
+  if (opt_max_parallel_downloads > 0)
+    flatpak_transaction_set_max_parallel_downloads (transaction, opt_max_parallel_downloads);
 
   if (!setup_sideload_repositories (transaction, opt_sideload_repos, cancellable, error))
     return FALSE;
