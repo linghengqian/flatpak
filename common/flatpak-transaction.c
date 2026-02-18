@@ -1549,7 +1549,7 @@ flatpak_transaction_init (FlatpakTransaction *self)
   priv->extra_sideload_repos = g_ptr_array_new_with_free_func (g_free);
   priv->sideload_image_collections = g_ptr_array_new_with_free_func (g_object_unref);
   priv->can_run = TRUE;
-  priv->max_parallel_downloads = 1; /* Default to sequential downloads */
+  priv->max_parallel_downloads = 0; /* Default to automatic parallel downloads based on package count */
 }
 
 
@@ -2038,9 +2038,10 @@ flatpak_transaction_get_auto_install_debug (FlatpakTransaction *self)
  * @max_parallel_downloads: the maximum number of downloads to run in parallel
  *
  * Sets the maximum number of downloads that can run in parallel during the
- * transaction. A value of 1 (the default) means downloads will be sequential.
- * Setting a higher value can speed up installations when multiple packages
- * need to be downloaded, but may cause issues on slower or unstable connections.
+ * transaction. A value of 0 (the default) means automatic parallel downloads
+ * based on the number of packages to download (n packages = n parallel downloads).
+ * A value of 1 means sequential downloads. Setting a specific value can help
+ * limit resource usage on slower or unstable connections.
  *
  * Note: Deployment (installation) is always done sequentially after downloads
  * complete, regardless of this setting.
@@ -2053,8 +2054,8 @@ flatpak_transaction_set_max_parallel_downloads (FlatpakTransaction *self,
 {
   FlatpakTransactionPrivate *priv = flatpak_transaction_get_instance_private (self);
 
-  /* Ensure at least 1 to avoid division by zero or other issues */
-  priv->max_parallel_downloads = MAX (1, max_parallel_downloads);
+  /* Allow 0 to mean automatic (based on number of packages) */
+  priv->max_parallel_downloads = max_parallel_downloads;
 }
 
 /**
@@ -2064,7 +2065,7 @@ flatpak_transaction_set_max_parallel_downloads (FlatpakTransaction *self,
  * Gets the maximum number of parallel downloads set by
  * flatpak_transaction_set_max_parallel_downloads().
  *
- * Returns: the maximum number of parallel downloads (minimum 1)
+ * Returns: the maximum number of parallel downloads (0 means automatic)
  *
  * Since: 1.16.0
  */
@@ -5910,19 +5911,56 @@ flatpak_transaction_real_run (FlatpakTransaction *self,
     return flatpak_fail_error (error, FLATPAK_ERROR_ABORTED, _("Aborted by user"));
 
   /* Two-phase execution: Download phase, then Deploy phase */
-  if (priv->max_parallel_downloads > 1 && !priv->no_pull)
+
+  /* First, count how many operations need downloading for auto-calculation */
+  guint download_op_count = 0;
+  if (!priv->no_pull)
+    {
+      GList *l;
+      for (l = priv->ops; l != NULL; l = l->next)
+        {
+          FlatpakTransactionOperation *op = l->data;
+
+          if (op->skip)
+            continue;
+
+          /* Only INSTALL and UPDATE operations need downloading */
+          if (op->kind != FLATPAK_TRANSACTION_OPERATION_INSTALL &&
+              op->kind != FLATPAK_TRANSACTION_OPERATION_UPDATE)
+            continue;
+
+          /* Skip updates that don't need downloading */
+          if (op->kind == FLATPAK_TRANSACTION_OPERATION_UPDATE && op->update_only_deploy)
+            continue;
+
+          download_op_count++;
+        }
+    }
+
+  /* Determine actual parallel download count:
+   * - If max_parallel_downloads == 0: automatic (use download_op_count)
+   * - If max_parallel_downloads == 1: sequential mode
+   * - Otherwise: use the specified value
+   */
+  guint actual_parallel_downloads = priv->max_parallel_downloads;
+  if (actual_parallel_downloads == 0)
+    actual_parallel_downloads = download_op_count;
+
+  /* Use parallel downloads if we have more than 1 download and we're not in sequential mode */
+  if (actual_parallel_downloads > 1 && !priv->no_pull && download_op_count > 0)
     {
       /* PHASE 1: Parallel Downloads */
       g_autoptr(GThreadPool) download_pool = NULL;
       g_autoptr(GPtrArray) download_tasks = g_ptr_array_new_with_free_func ((GDestroyNotify) download_task_data_free);
       GList *l;
 
-      g_info ("Running parallel downloads (max=%u concurrent downloads)", priv->max_parallel_downloads);
+      g_info ("Running parallel downloads (max=%u concurrent downloads for %u packages)",
+              actual_parallel_downloads, download_op_count);
 
       /* Create thread pool for parallel downloads */
       download_pool = g_thread_pool_new (download_task_func,
                                          NULL,  /* user_data */
-                                         priv->max_parallel_downloads,
+                                         actual_parallel_downloads,
                                          FALSE,  /* exclusive */
                                          NULL);
 
