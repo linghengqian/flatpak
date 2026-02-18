@@ -1867,6 +1867,7 @@ check_auth_cache (uid_t uid, const gchar *action)
   G_LOCK (auth_cache);
   if (auth_cache == NULL)
     {
+      g_info ("check_auth_cache: cache is NULL for %s", cache_key);
       G_UNLOCK (auth_cache);
       return FALSE;
     }
@@ -1875,9 +1876,19 @@ check_auth_cache (uid_t uid, const gchar *action)
   if (cached_time != NULL)
     {
       if ((current_time - *cached_time) < AUTH_CACHE_TIMEOUT_SECONDS)
-        cached = TRUE;
+        {
+          g_info ("check_auth_cache: found cached authorization for %s (age: %ld seconds)", cache_key, (long)(current_time - *cached_time));
+          cached = TRUE;
+        }
       else
-        g_hash_table_remove (auth_cache, cache_key);
+        {
+          g_info ("check_auth_cache: cached authorization for %s expired (age: %ld seconds)", cache_key, (long)(current_time - *cached_time));
+          g_hash_table_remove (auth_cache, cache_key);
+        }
+    }
+  else
+    {
+      g_info ("check_auth_cache: no cached authorization found for %s", cache_key);
     }
   G_UNLOCK (auth_cache);
 
@@ -1925,6 +1936,7 @@ cache_authorization (uid_t uid, const gchar *action)
   *cached_time = g_get_monotonic_time () / G_USEC_PER_SEC;
 
   g_hash_table_replace (auth_cache, g_steal_pointer (&cache_key), cached_time);
+  g_info ("cache_authorization: cached authorization for uid %u, action %s", uid, action);
 
   cleanup_stale_auth_cache_entries ();
   G_UNLOCK (auth_cache);
@@ -1945,6 +1957,7 @@ cache_related_authorization (uid_t uid, const gchar *action, const gchar *relate
   *cached_time = g_get_monotonic_time () / G_USEC_PER_SEC;
 
   g_hash_table_replace (auth_cache, g_steal_pointer (&cache_key), cached_time);
+  g_info ("cache_related_authorization: cached related authorization for uid %u, related_action %s (triggered by %s)", uid, related_action, action);
   G_UNLOCK (auth_cache);
 }
 
