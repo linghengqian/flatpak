@@ -2303,6 +2303,8 @@ flatpak_authorize_method_handler (GDBusInterfaceSkeleton *interface,
                        g_strcmp0 (method_name, "EnsureRepo") == 0)
                 {
                   cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.configure-remote");
+                  cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.app-install");
+                  cache_related_authorization (caller_uid, action, "org.freedesktop.Flatpak.runtime-install");
                 }
               else if (g_strcmp0 (action, "org.freedesktop.Flatpak.app-install") == 0 ||
                        g_strcmp0 (action, "org.freedesktop.Flatpak.runtime-install") == 0)
